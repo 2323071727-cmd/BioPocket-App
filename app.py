@@ -4,7 +4,6 @@ import numpy as np
 import base64
 from openai import OpenAI
 import pdfplumber
-import re
 
 # -----------------------------------------------------------------------------
 # 1. 全局配置 (V21 纯净修复版)
