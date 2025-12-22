@@ -6,10 +6,9 @@ import time
 import base64
 from openai import OpenAI
 import pdfplumber
-import re  # 必须导入这个，用于清洗文献输出的乱码
 
 # -----------------------------------------------------------------------------
-# 1. 全局配置 (V21 - 保持原样)
+# 1. 全局配置 (V21)
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="BioPocket Pro", 
@@ -19,7 +18,7 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# 2. 界面样式 (V21 - 保持原样)
+# 2. 界面样式 (专业科研风 + 强制黑字)
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -89,37 +88,24 @@ def read_full_pdf(uploaded_file):
     text = ""
     try:
         with pdfplumber.open(uploaded_file) as pdf:
-            # 【修复点1】限制读取页数。手机内存小，读几百页会直接卡死。
-            # 这里限制只读前 30 页，这对大多数文献足够了，且能保证APP不崩。
-            max_pages = 30
-            for i, page in enumerate(pdf.pages):
-                if i >= max_pages: break
+            for page in pdf.pages:
                 t = page.extract_text()
                 if t: text += t + "\n"
         return text
     except Exception as e:
         return None
 
-# 【新增】清洗函数：借鉴仪器识别的逻辑，强制把输出变成卡片
-def clean_html_output(text):
-    if not text: return ""
-    text = text.strip()
-    # 删掉 markdown 的代码块符号
-    text = re.sub(r'^```html', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'^```', '', text)
-    text = re.sub(r'```$', '', text)
-    return text.strip()
-
 # -----------------------------------------------------------------------------
 # 4. 侧边栏导航
 # -----------------------------------------------------------------------------
 with st.sidebar:
-    st.image("[https://cdn-icons-png.flaticon.com/512/3022/3022288.png](https://cdn-icons-png.flaticon.com/512/3022/3022288.png)", width=60)
+    st.image("https://cdn-icons-png.flaticon.com/512/3022/3022288.png", width=60)
     st.title("BioPocket")
     st.caption("v21.0 | Release Candidate")
     st.markdown("---")
     
     # === V21 文案优化：更专业的导航名 ===
+    # index=0 确保默认打开第一个页面
     menu = st.radio(
         "功能模组 (Modules)", 
         ["🏠 实验室工作台", "🧫 智能计数", "📷 仪器图谱", "📄 文献精读 (Pro)"], 
@@ -134,7 +120,7 @@ with st.sidebar:
         api_key = st.text_input("API Key (在此输入)", type="password")
         
         with st.expander("高级参数设置", expanded=False):
-            base_url = st.text_input("Base URL", value="[https://open.bigmodel.cn/api/paas/v4/](https://open.bigmodel.cn/api/paas/v4/)")
+            base_url = st.text_input("Base URL", value="https://open.bigmodel.cn/api/paas/v4/")
             st.caption("注：文献阅读已自动优化为长文本模式。")
 
 # -----------------------------------------------------------------------------
@@ -150,6 +136,7 @@ if "工作台" in menu:
     
     # 数据概览
     col1, col2, col3 = st.columns(3)
+    # 使用更专业的术语
     col1.metric("累计分析样本", "1,524", "+12 今天")
     col2.metric("文献智库", "102 篇", "已索引")
     col3.metric("云端算力", "GLM-4", "Online")
@@ -157,7 +144,7 @@ if "工作台" in menu:
     st.markdown("### 📅 今日任务 (Today's Tasks)")
     st.info("💡 提示：您有一篇关于 *CRISPR-Cas9* 的文献待精读。")
     
-    st.image("[https://images.unsplash.com/photo-1579154204601-01588f351e67?auto=format&fit=crop&q=80&w=1000](https://images.unsplash.com/photo-1579154204601-01588f351e67?auto=format&fit=crop&q=80&w=1000)", caption="Science starts here.", use_container_width=True)
+    st.image("https://images.unsplash.com/photo-1579154204601-01588f351e67?auto=format&fit=crop&q=80&w=1000", caption="Science starts here.", use_container_width=True)
 
 # === 页面 2: 智能计数 (Counter) ===
 elif "计数" in menu:
@@ -167,6 +154,7 @@ elif "计数" in menu:
     with c1:
         st.markdown("### 🛠️ 参数配置")
         with st.container(border=True):
+            # 优化文案：CFU, PFU
             count_mode = st.radio("检测对象", ["🧫 细菌菌落 (CFU)", "🦠 噬菌体空斑 (PFU)", "🩸 细胞微粒 (Cells)"])
             
             if "细菌" in count_mode: d_l, d_m = True, 10
@@ -181,43 +169,28 @@ elif "计数" in menu:
         up = st.file_uploader("上传实验图像", type=['jpg','png'])
     with c2:
         if up:
-            try:
-                fb = np.asarray(bytearray(up.read()), dtype=np.uint8)
-                img = cv2.imdecode(fb, 1)
-                
-                # 【修复点2：APP 适配】
-                # 手机照片太大（4000+像素）会导致 APP 内存溢出卡死。
-                # 解决方法：如果图片宽超过 1000px，就强制缩小，保证秒出结果。
-                h, w = img.shape[:2]
-                if w > 1000:
-                    scale = 1000 / w
-                    img = cv2.resize(img, (0,0), fx=scale, fy=scale)
-                    # 图片变小了，ROI圈和面积参数也要按比例缩小，不然圈圈会变得巨大
-                    roi = int(roi * scale)
-                    min_a = int(min_a * scale)
-
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                if clahe: gray = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(gray)
-                mask = np.zeros(img.shape[:2], dtype=np.uint8)
-                cv2.circle(mask, (img.shape[1]//2, img.shape[0]//2), roi, 255, -1)
-                masked = cv2.bitwise_and(gray, gray, mask=mask)
-                blur = cv2.GaussianBlur(masked, (5,5), 0)
-                if is_light: _, th = cv2.threshold(blur, th_val, 255, cv2.THRESH_BINARY)
-                else: _, th = cv2.threshold(blur, th_val, 255, cv2.THRESH_BINARY_INV)
-                th = cv2.bitwise_and(th, th, mask=mask)
-                cnts, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                res = img.copy()
-                cv2.circle(res, (img.shape[1]//2, img.shape[0]//2), roi, (0,0,255), 2)
-                c = 0
-                for ct in cnts:
-                    if min_a < cv2.contourArea(ct) < 3000:
-                        c+=1
-                        cv2.drawContours(res, [ct], -1, (0,255,0), 2)
-                st.image(res, channels="BGR", caption=f"识别结果: {c}", use_container_width=True)
-                st.success(f"✅ 计数完成：共检测到 **{c}** 个目标。")
-            
-            except Exception as e:
-                st.error(f"处理出错（可能是图片格式问题）: {e}")
+            fb = np.asarray(bytearray(up.read()), dtype=np.uint8)
+            img = cv2.imdecode(fb, 1)
+            img = cv2.resize(img, (int(img.shape[1]*0.6), int(img.shape[0]*0.6)))
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            if clahe: gray = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(gray)
+            mask = np.zeros(img.shape[:2], dtype=np.uint8)
+            cv2.circle(mask, (img.shape[1]//2, img.shape[0]//2), roi, 255, -1)
+            masked = cv2.bitwise_and(gray, gray, mask=mask)
+            blur = cv2.GaussianBlur(masked, (5,5), 0)
+            if is_light: _, th = cv2.threshold(blur, th_val, 255, cv2.THRESH_BINARY)
+            else: _, th = cv2.threshold(blur, th_val, 255, cv2.THRESH_BINARY_INV)
+            th = cv2.bitwise_and(th, th, mask=mask)
+            cnts, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            res = img.copy()
+            cv2.circle(res, (img.shape[1]//2, img.shape[0]//2), roi, (0,0,255), 2)
+            c = 0
+            for ct in cnts:
+                if min_a < cv2.contourArea(ct) < 3000:
+                    c+=1
+                    cv2.drawContours(res, [ct], -1, (0,255,0), 2)
+            st.image(res, channels="BGR", caption=f"识别结果: {c}", use_container_width=True)
+            st.success(f"✅ 计数完成：共检测到 **{c}** 个目标。")
 
 # === 页面 3: 仪器图谱 (Instrument ID) ===
 elif "仪器" in menu:
@@ -251,8 +224,7 @@ elif "仪器" in menu:
                             model="glm-4v", 
                             messages=[{"role":"user","content":[{"type":"text","text":p},{"type":"image_url","image_url":{"url":f"data:image/jpeg;base64,{b64}"}}]}]
                         )
-                        # 【修复点3】使用清洗函数，保证输出不乱码
-                        st.markdown(clean_html_output(r.choices[0].message.content), unsafe_allow_html=True)
+                        st.markdown(r.choices[0].message.content, unsafe_allow_html=True)
                         st.success("✅ 设备档案检索成功")
                 except Exception as e: st.error(f"识别服务异常: {str(e)}")
 
@@ -280,13 +252,13 @@ elif "文献" in menu:
                         with st.spinner("2/3 AI 正在进行逻辑拆解与关键信息提取..."):
                             client = OpenAI(api_key=api_key, base_url=base_url)
                             
-                            # 【修复点4】Prompt 格式对齐仪器识别，强制输出卡片
+                            # V21 Prompt: 更加强调结构化和中文输出
                             deep_prompt = """
                             你是一位精通中英文的资深生物科学家。请精读这篇文献全文。
                             
-                            **指令：** 必须使用中文回答，内容详实，HTML格式。**不要使用 Markdown 代码块。**
+                            **指令：** 必须使用中文回答，内容详实，HTML格式。
 
-                            请输出三部分内容，严格按照以下 HTML 结构（参考仪器识别的卡片）：
+                            请输出三部分内容：
 
                             <div class="result-card">
                                 <h3>📑 深度导读 (Deep Review)</h3>
@@ -328,8 +300,7 @@ elif "文献" in menu:
                             
                         with st.spinner("3/3 正在生成分析报告..."):
                             time.sleep(1)
-                            # 【修复点5】使用清洗函数，强制显示为卡片
-                            st.markdown(clean_html_output(response.choices[0].message.content), unsafe_allow_html=True)
+                            st.markdown(response.choices[0].message.content, unsafe_allow_html=True)
                             st.success("✅ 文献精读报告已生成")
                             
             except Exception as e:
